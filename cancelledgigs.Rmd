@@ -1,0 +1,260 @@
+---
+title: "ticketmaster"
+author: "Paul Bradshaw"
+date: "15/05/2019"
+output: html_document
+---
+
+# Scraping ticketmaster
+
+We want to script details from URLs like this: 
+
+* music: All concerts: https://www.ticketmaster.co.uk/browse/all-concerts-catid-10001/music-rid-10001
+* Arts, Theatre and Comedy: https://www.ticketmaster.co.uk/browse/all-arts-theatre-and-comedy-catid-10002/arts-theatre-and-comedy-rid-10002
+
+To access more than the first page you have to scroll down rather than move to another page. That makes it trickier from a normal scraping POV - OutWit Hub, for example, couldn't navigate to the next page and nor could you follow a link using Python or R.
+
+So normally that problem would have to be solved by an emulator-type scraper such as Selenium, which is v advanced
+
+However, when you do load a further page this file is called: https://www.ticketmaster.co.uk/api/category/10001/events?page=1
+
+That's 20 listings. You can access another 20 by going to https://www.ticketmaster.co.uk/api/category/10001/events?page=2
+
+Conveniently it has a cancelled: true  field so makes it easier to analyse
+
+The 10001 in the JSON URL mirrors that in https://www.ticketmaster.co.uk/browse/all-concerts-catid-10001/music-rid-10001 so you could adapt it for other category codes 
+
+So in terms of writing a scraper, actually you should already have a lot of the coding knowhow - you need to:
+
+* Create a vector of page numbers (you can use `seq()` to generate a range of numbers in R)
+* Loop through that vector, convert the integer to a string and concatenate with the base URL for the JSON using `paste()`
+* Load the JSON at that URL using a function from a package like `jsonlite`
+* Store it as a dataframe
+* Repeat for each URL and append to the dataframe using `rbind`  etc.
+
+## Calculating the page numbers
+
+The JSON at https://www.ticketmaster.co.uk/api/category/10001/events?page=1 says there `total:1000` suggesting that there's a limit to the number of events that can be queried.
+
+Each page has 20 results.
+
+Let's use that to start to construct the URLs we will need to fetch JSON from.
+
+```{r create vector of page numbers}
+#Store the total and results per page
+totalresults = 1000
+resultsperpage = 20
+#Use to calculate a last page
+lastpage <- totalresults/resultsperpage
+#Use to generate a vector of page numbers
+pagenumbers <- seq(1,lastpage)
+```
+
+## Generating a list of URLs
+
+Now we have a sequence of numbers. Let's attach those to the base URL to generate a sequence of URLs.
+
+Because we can't combine numbers with strings (the base URL) we will need to convert the number to a string as we go:
+
+```{r create vector of urls}
+#Store the base url
+baseurl <- "https://www.ticketmaster.co.uk/api/category/10001/events?page="
+#Create an empty vector to store the list of URLs we are about to generate
+pageurls <- c()
+#Loop through the vector of numbers
+for(i in pagenumbers){
+  #Create the full URL by converting i into a string and adding it to the end
+  pageurl <- paste(baseurl,as.character(i),sep="")
+  pageurls <- c(pageurls,pageurl)
+}
+#Test
+print(pageurls[10])
+```
+
+## Testing one URL
+
+Now let's see if we can fetch the JSON from one URL.
+
+We need the jsonlite package for this...
+
+```{r jsonlite}
+#Activate the json library
+library(jsonlite)
+```
+
+...and we can test a URL like this:
+
+```{r fetch json}
+#Fetch from url
+p1json <- jsonlite::fromJSON(pageurls[1])
+#Test some of the branches
+p1json$total
+p1json$totalLocal
+#test the events list
+p1json$events
+```
+Let's store that events branch:
+
+```{r store events as df}
+#We can access the fourth branch - the events - this way too
+#This avoids an error we otherwise get later
+#See https://stackoverflow.com/questions/48814733/rbind-fromjson-page-duplicate-rowname-error
+#Adding flatten = T also splits out some data such as dates
+p1events <- jsonlite::fromJSON(pageurls[1], flatten = T)[[4]]
+
+```
+
+## Repeat for all URLs
+
+Now we can do this for all URLs. First we need an empty data frame which will be added to as it loops through each URL, grabbing its JSON.
+
+```{r create empty df}
+#Create a new data frame just using the column headings of p1events without any data
+eventsall <- p1events[0,]
+```
+
+
+```{r loop through urls}
+#Now loop through that list of URLS
+for(i in pageurls){
+  #print(i)
+  #fetch the JSON from that url
+  ijson <- jsonlite::fromJSON(i, flatten = T)[[4]]
+  #print(ijson)
+  #append to the aggregate data frame
+  eventsall <- rbind(eventsall,ijson)
+}
+```
+
+We get an error on page 9: `numbers of columns of arguments do not match`.
+
+Perhaps some optional branches that were on at least some entries in previous pages are not on any entries on this page. Let's see which is missing:
+
+```{r compare colnames}
+colnames(ijson)
+colnames(eventsall)
+```
+
+Firstly the order differs: 'soldOut' is the 9th element in on p9 but 10th in the other data. 
+
+But 'postponed' seems to only be in the more recent data.
+
+```{r check if postponed in dfs}
+"postponed" %in% colnames(ijson)
+"postponed" %in% colnames(eventsall)
+```
+
+This makes sense - concerts aren't often postponed so we might expect to see 20 in a row where that didn't happen, pre-coronavirus.
+
+Can we test that and fix it?
+
+```{r add postponed column if doesn't exist}
+if ("postponed" %in% colnames(ijson)) { print("YEP") } else{ print("FIX IT"); ijson$postponed <- "no data" }
+colnames(ijson)
+"postponed" %in% colnames(ijson)
+eventsall <- rbind(eventsall,ijson)
+```
+
+Great. Now let's incorporate that into the loop:
+
+```{r loop and replace}
+#Now loop through that list of URLS
+for(i in pageurls){
+  #print(i)
+  #fetch the JSON from that url
+  ijson <- jsonlite::fromJSON(i, flatten = T)[[4]]
+  if ("postponed" %in% colnames(ijson)) { print("YEP") } 
+  else{ print("FIX IT"); ijson$postponed <- "no data" }
+  colnames(ijson)
+  #print(ijson)
+  #append to the aggregate data frame
+  eventsall <- rbind(eventsall,ijson)
+}
+```
+
+Same problem again.
+
+
+```{r compare colnames again}
+colnames(ijson)
+colnames(eventsall)
+```
+
+This time I'm going to use a loop to identify which one from one list is missing in the other:
+
+```{r check if cancelled in dfs}
+for(i in colnames(eventsall)){
+  print(i)
+  print(i %in% colnames(ijson))
+}
+```
+
+So it's 'ticketingStatus'. We adapt the loop accordingly:
+
+```{r loop and replace 2}
+#Now loop through that list of URLS
+for(i in pageurls){
+  #print(i)
+  #fetch the JSON from that url
+  ijson <- jsonlite::fromJSON(i, flatten = T)[[4]]
+  if ("postponed" %in% colnames(ijson)) { print("YEP") } 
+  else{ print("FIX IT"); ijson$postponed <- "no data" }
+  if ("ticketingStatus" %in% colnames(ijson)) { print("") } 
+  else{ print("FIX TS"); ijson$ticketingStatus <- "no data" }
+  #colnames(ijson)
+  #print(ijson)
+  #append to the aggregate data frame
+  eventsall <- rbind(eventsall,ijson)
+}
+```
+
+Back again.
+
+```{r check what is added}
+colnames(ijson)
+colnames(eventsall)
+```
+
+This time there are extra columns rather than missing ones.
+
+```{r}
+for(i in colnames(ijson)){
+  if(i %in% colnames(eventsall)){
+    #print(i)
+  } else {print(i); print("NEW")}
+  }
+
+```
+
+This time let's just add whatever is missing
+
+
+```{r loop and auto replace}
+#Now loop through that list of URLS
+for(i in pageurls){
+  #print(i)
+  #fetch the JSON from that url
+  ijson <- jsonlite::fromJSON(i, flatten = T)[[4]]
+  if ("postponed" %in% colnames(ijson)) { print("YEP") } 
+  else{ print("FIX IT"); ijson$postponed <- "no data" }
+  if ("ticketingStatus" %in% colnames(ijson)) { print("") } 
+  else{ print("FIX TS"); ijson$ticketingStatus <- "no data" }
+  for(i in colnames(ijson)){
+  if(i %in% colnames(eventsall)){
+    #print(i)
+  } else { eventsall[,i] <- "no data"}
+  }
+  #colnames(ijson)
+  #print(ijson)
+  #append to the aggregate data frame
+  eventsall <- rbind(eventsall,ijson)
+}
+```
+
+
+
+
+```{r export csv}
+write.csv(eventsall,"eventsall.csv")
+```
+
