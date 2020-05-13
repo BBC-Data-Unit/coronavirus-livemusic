@@ -6,6 +6,7 @@ In May 2020 we [reported](https://www.bbc.co.uk/news/uk-england-52573685) on fea
 
 ## Get the data 
 
+* [Music venues at risk](https://docs.google.com/spreadsheets/d/1xka115e5xijhDHaymHl0j7-5t9OSVGw_kCVhel9Beh8/edit#gid=0)
 * [Events listed on concert website](https://github.com/BBC-Data-Unit/coronavirus-livemusic/blob/master/eventsall.csv)
 
 ## Quotes and interviews 
